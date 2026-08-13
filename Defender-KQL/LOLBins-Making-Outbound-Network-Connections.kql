@@ -1,0 +1,24 @@
+// Title: LOLBins Making Outbound Network Connections
+// Description: Detects living-off-the-land binaries (LOLBins) commonly abused
+//   for command-and-control or payload download, directly initiating outbound
+//   network connections. Legitimate use of these binaries rarely involves them
+//   opening network connections themselves.
+// MITRE ATT&CK: T1218 (System Binary Proxy Execution), T1105 (Ingress Tool Transfer)
+// Data source: Microsoft Defender for Endpoint (DeviceProcessEvents, DeviceNetworkEvents)
+// False positives: Some IT management, patching, and software distribution
+//   tools legitimately invoke these binaries with network activity (e.g. SCCM,
+//   Intune). Baseline InitiatingProcessFileName against known admin tooling
+//   before triaging as suspicious.
+
+let LOLBins = dynamic(["rundll32.exe", "regsvr32.exe", "mshta.exe", "certutil.exe", "installutil.exe", "msbuild.exe", "regsvcs.exe", "regasm.exe"]);
+DeviceProcessEvents
+| where FileName in~ (LOLBins)
+| project ProcessCreationTime = Timestamp, DeviceName, FileName, ProcessId, InitiatingProcessFileName, InitiatingProcessCommandLine, AccountName
+| join kind=inner (
+    DeviceNetworkEvents
+    | where RemoteIPType == "Public"
+    | project NetworkTimestamp = Timestamp, DeviceName, InitiatingProcessId, RemoteIP, RemotePort, RemoteUrl
+) on DeviceName
+| where InitiatingProcessId == ProcessId and NetworkTimestamp between (ProcessCreationTime .. (ProcessCreationTime + 5m))
+| project ProcessCreationTime, DeviceName, AccountName, FileName, InitiatingProcessFileName, InitiatingProcessCommandLine, RemoteIP, RemotePort, RemoteUrl
+| order by ProcessCreationTime desc

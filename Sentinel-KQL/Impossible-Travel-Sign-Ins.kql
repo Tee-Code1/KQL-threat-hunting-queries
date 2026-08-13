@@ -1,0 +1,38 @@
+// Title: Impossible Travel - Sign-Ins From Distant Locations in a Short Window
+// Description: Flags accounts with consecutive successful sign-ins from two
+//   geographically distant locations within a time window too short for
+//   physical travel between them, suggesting credential compromise.
+// MITRE ATT&CK: T1078 (Valid Accounts)
+// Data source: Microsoft Entra ID sign-in logs (SigninLogs)
+// False positives: Corporate VPNs, cloud proxies, and CDN egress points can
+//   make a single user appear to jump locations. Exclude known VPN/proxy
+//   IP ranges before triaging, and check for MFA satisfaction on both events.
+
+let TimeWindowHours = 24;
+let MinDistanceKm = 500;
+let MaxPlausibleSpeedKmh = 1000; // conservative upper bound for commercial flight speed
+SigninLogs
+| where ResultType == 0
+| extend City = tostring(LocationDetails.city),
+         Country = tostring(LocationDetails.countryOrRegion),
+         Latitude = todouble(LocationDetails.geoCoordinates.latitude),
+         Longitude = todouble(LocationDetails.geoCoordinates.longitude)
+| where isnotempty(Latitude) and isnotempty(Longitude)
+| project TimeGenerated, UserPrincipalName, IPAddress, City, Country, Latitude, Longitude
+| order by UserPrincipalName asc, TimeGenerated asc
+| serialize
+| extend PrevUser = prev(UserPrincipalName),
+         PrevTime = prev(TimeGenerated),
+         PrevLat = prev(Latitude),
+         PrevLon = prev(Longitude),
+         PrevCountry = prev(Country),
+         PrevIP = prev(IPAddress)
+| where UserPrincipalName == PrevUser
+| extend DistanceKm = geo_distance_2points(Longitude, Latitude, PrevLon, PrevLat) / 1000
+| extend HoursBetween = datetime_diff('minute', TimeGenerated, PrevTime) / 60.0
+| extend RequiredSpeedKmh = iff(HoursBetween > 0, DistanceKm / HoursBetween, real(null))
+| where HoursBetween between (0.0 .. real(TimeWindowHours))
+    and DistanceKm > MinDistanceKm
+    and RequiredSpeedKmh > MaxPlausibleSpeedKmh
+| project TimeGenerated, PrevTime, UserPrincipalName, Country, PrevCountry, DistanceKm, HoursBetween, RequiredSpeedKmh, IPAddress, PrevIP
+| order by TimeGenerated desc
