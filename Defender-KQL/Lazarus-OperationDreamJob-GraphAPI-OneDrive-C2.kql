@@ -1,0 +1,32 @@
+// Title: Lazarus "Operation Dream Job" - MISTPEN C2 via Microsoft Graph API / OneDrive
+// Description: The MISTPEN downloader used in this campaign communicates
+//   with its operators through the legitimate Microsoft Graph API and
+//   OneDrive, blending C2 traffic into trusted cloud service domains to
+//   evade network-based detection and reputation filtering. This query
+//   flags non-standard processes (i.e. not the OneDrive client, Office
+//   apps, or browsers) calling graph.microsoft.com or OneDrive endpoints -
+//   a pattern generally applicable to any malware abusing trusted cloud
+//   APIs for C2, not just this campaign.
+// MITRE ATT&CK: T1102 (Web Service), T1071.001 (Application Layer Protocol:
+//   Web Protocols), T1567 (Exfiltration Over Web Service)
+// Data source: Microsoft Defender for Endpoint (DeviceNetworkEvents)
+// False positives: Custom line-of-business tools, RMM agents, or scripts
+//   that legitimately call Microsoft Graph (e.g. PowerShell automation,
+//   backup tools) will trigger this. Extend LegitimateCloudProcesses and
+//   baseline InitiatingProcessFolderPath for known-good automation before
+//   escalating.
+
+let LegitimateCloudProcesses = dynamic([
+    "onedrive.exe", "teams.exe", "outlook.exe", "msedge.exe", "chrome.exe",
+    "firefox.exe", "explorer.exe", "searchprotocolhost.exe", "backgroundtaskhost.exe",
+    "powerpnt.exe", "winword.exe", "excel.exe"
+]);
+DeviceNetworkEvents
+| where RemoteUrl has_any ("graph.microsoft.com", "1drv.ms", "onedrive.live.com")
+| where InitiatingProcessFileName !in~ (LegitimateCloudProcesses)
+| where InitiatingProcessFolderPath !startswith @"C:\Program Files"
+    and InitiatingProcessFolderPath !startswith @"C:\Program Files (x86)"
+| project Timestamp, DeviceName, RemoteUrl, RemoteIP, RemotePort,
+    InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine,
+    InitiatingProcessSHA256, InitiatingProcessAccountName
+| order by Timestamp desc

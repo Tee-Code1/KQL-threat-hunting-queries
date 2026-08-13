@@ -1,0 +1,27 @@
+// Title: Lazarus "Operation Dream Job" - libmupdf.dll Side-Loading
+// Description: Detects the DLL side-loading chain used by Lazarus Group's
+//   Operation Dream Job campaign (exploiting CVE-2026-68820). Victims are
+//   lured via fake recruiter job offers on LinkedIn into downloading an
+//   encrypted archive that side-loads a malicious "libmupdf.dll" to launch
+//   the MISTPEN downloader while displaying a decoy job description. A
+//   legitimate libmupdf.dll normally ships inside a PDF viewer's Program
+//   Files install directory, not a user-writable path.
+// MITRE ATT&CK: T1566.002 (Phishing: Spearphishing Link), T1204.002 (User
+//   Execution: Malicious File), T1574.002 (Hijack Execution Flow: DLL
+//   Side-Loading)
+// Data source: Microsoft Defender for Endpoint (DeviceImageLoadEvents)
+// False positives: Rare - flag if an org has a legitimate custom PDF tool
+//   named libmupdf.dll deployed from a non-standard path; verify the
+//   InitiatingProcess and SHA256 against known-good baselines before
+//   dismissing.
+
+DeviceImageLoadEvents
+| where FileName =~ "libmupdf.dll"
+| where FolderPath !startswith @"C:\Program Files"
+    and FolderPath !startswith @"C:\Program Files (x86)"
+    and FolderPath !startswith @"C:\Windows"
+| project Timestamp, DeviceName, FileName, FolderPath, SHA256,
+    InitiatingProcessFileName, InitiatingProcessFolderPath,
+    InitiatingProcessCommandLine, InitiatingProcessSHA256,
+    InitiatingProcessAccountName
+| order by Timestamp desc

@@ -1,0 +1,27 @@
+// Title: Lazarus "Operation Dream Job" - Smart App Control Tampering
+// Description: After escalating to SYSTEM via CVE-2026-68820 (Windows AFD.sys
+//   privilege escalation), Lazarus deploys the FudModule 3.1 kernel-mode
+//   rootkit, which disables Windows Smart App Control by forcing its
+//   VerifiedAndReputablePolicyState value to 0. This is a high-fidelity,
+//   rarely-legitimate registry change - Smart App Control state is not
+//   normally toggled by user or admin action once enabled, and disabling it
+//   via direct registry write (rather than the OS setting UI) is a strong
+//   defense-evasion indicator.
+// MITRE ATT&CK: T1068 (Exploitation for Privilege Escalation), T1014
+//   (Rootkit), T1562.001 (Impair Defenses: Disable or Modify Tools)
+// Data source: Microsoft Defender for Endpoint (DeviceRegistryEvents)
+// False positives: Very low. Legitimate Smart App Control state changes
+//   happen through Windows Security settings (WSCore/related processes),
+//   not raw registry writes from arbitrary processes - inspect
+//   InitiatingProcessFileName for anything other than expected OS
+//   components before treating as benign.
+
+DeviceRegistryEvents
+| where ActionType == "RegistryValueSet"
+| where RegistryKey has @"CI\Policy"
+| where RegistryValueName =~ "VerifiedAndReputablePolicyState"
+| where RegistryValueData in ("0", "0x0", "%%0")
+| project Timestamp, DeviceName, ActionType, RegistryKey, RegistryValueName, RegistryValueData,
+    InitiatingProcessFileName, InitiatingProcessFolderPath, InitiatingProcessCommandLine,
+    InitiatingProcessSHA256, InitiatingProcessIntegrityLevel, InitiatingProcessAccountName
+| order by Timestamp desc
