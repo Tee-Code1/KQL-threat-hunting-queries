@@ -1,0 +1,26 @@
+// Title: ClickFix - Suspicious PowerShell/CMD Launched From Explorer or Windows Terminal
+// Description: Detects the classic "ClickFix" execution fingerprint: a
+//   victim is social-engineered by a fake verification/CAPTCHA prompt into
+//   pasting and running a command themselves via the Run dialog or Windows
+//   Terminal, rather than a file being delivered and clicked. The resulting
+//   child process is typically PowerShell, cmd, mshta, or msiexec launched
+//   directly by explorer.exe/WindowsTerminal.exe with a hidden window and/or
+//   a web-request cmdlet in the command line. This pattern is generic to
+//   ClickFix campaigns broadly, not just the Deno/infostealer variant.
+// MITRE ATT&CK: T1204 (User Execution - ClickFix paste-and-run social
+//   engineering), T1059.001 (PowerShell)
+// Data source: Microsoft Defender for Endpoint (DeviceProcessEvents)
+// False positives: IT help-desk-guided remediation steps, some legitimate
+//   software installers that instruct users to paste a command (rare but
+//   exists). Review ProcessCommandLine content and destination domain
+//   before escalating.
+
+DeviceProcessEvents
+| where InitiatingProcessFileName in~ ("explorer.exe", "WindowsTerminal.exe", "OpenConsole.exe")
+| where FileName in~ ("powershell.exe", "pwsh.exe", "cmd.exe", "mshta.exe", "msiexec.exe")
+| where ProcessCommandLine has_any (
+    "-windowstyle hidden", "-w hidden", "-enc ", "-EncodedCommand",
+    "Invoke-WebRequest", "Invoke-RestMethod", "iwr ", "irm ", "curl.exe", "winget "
+  )
+| project Timestamp, DeviceName, InitiatingProcessFileName, FileName, ProcessCommandLine, AccountName
+| order by Timestamp desc

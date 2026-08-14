@@ -1,0 +1,28 @@
+// Title: ClickFix/Deno Campaign - Known IOC Match (Domains, IP, Filenames)
+// Description: Matches endpoint telemetry against published indicators for
+//   the June 2026 Sophos-tracked ClickFix/Deno infostealer campaign: the
+//   compromised-WordPress loader domain, the Deno second-stage JS host, the
+//   TryCloudflare tunnel used as backup C2, the Python infostealer's hosting
+//   IP, and the staging script/payload filenames.
+// MITRE ATT&CK: T1584.004 (Compromise Infrastructure: Server), T1090
+//   (Proxy - TryCloudflare tunnel), T1105 (Ingress Tool Transfer)
+// Data source: Microsoft Defender for Endpoint (DeviceNetworkEvents, DeviceFileEvents)
+// False positives: Near-zero for the domain/IP matches - these are
+//   actor-controlled infrastructure. This is a point-in-time IOC list, not a
+//   behavioral detection; refresh indicators as the actor rotates
+//   infrastructure (the trycloudflare.com subdomain in particular is
+//   disposable and will change between waves).
+
+let IOCDomains = dynamic(["columbnezhjdq.com", "webstizkgao.com", "ordinary-computer-analytical-spell.trycloudflare.com"]);
+let IOCIPs = dynamic(["162.33.177.16"]);
+let IOCFiles = dynamic(["november85.cmd", "Griffin20.ps1", "install.pyc"]);
+union
+(DeviceNetworkEvents
+| where RemoteUrl has_any (IOCDomains) or RemoteIP in (IOCIPs)
+| project Timestamp, DeviceName, MatchType = "Network", Indicator = iff(isnotempty(RemoteUrl), RemoteUrl, RemoteIP),
+    InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessAccountName),
+(DeviceFileEvents
+| where FileName in~ (IOCFiles)
+| project Timestamp, DeviceName, MatchType = "Filename", Indicator = FileName,
+    InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessAccountName)
+| order by Timestamp desc

@@ -1,0 +1,30 @@
+// Title: ClickFix/Deno Campaign - Deno Persistence via Run Key or Scheduled Task
+// Description: The campaign persists by writing a Registry Run key
+//   disguised as a "Microsoft Edge update" that re-invokes the malicious
+//   JavaScript through a headless conhost.exe process, and/or by creating a
+//   scheduled task that periodically re-runs deno.exe against the remote
+//   payload URL (doubling as ongoing C2 check-in). Legitimate Deno
+//   installations do not register auto-run persistence for themselves.
+// MITRE ATT&CK: T1547.001 (Registry Run Keys / Startup Folder), T1053.005
+//   (Scheduled Task), T1036 (Masquerading - disguised as Edge update)
+// Data source: Microsoft Defender for Endpoint (DeviceRegistryEvents, DeviceEvents)
+// False positives: Low. Verify any hit isn't a legitimate CI/build agent
+//   that intentionally schedules Deno-based automation.
+
+let SuspiciousRunKeys =
+    DeviceRegistryEvents
+    | where ActionType == "RegistryValueSet"
+    | where RegistryKey has_any (@"CurrentVersion\Run", @"CurrentVersion\RunOnce")
+    | where RegistryValueData has_any ("deno.exe", "deno run", "conhost.exe")
+    | project Timestamp, DeviceName, DetectionType = "Run Key",
+        Detail = strcat(RegistryKey, " \\ ", RegistryValueName, " = ", RegistryValueData),
+        InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessAccountName;
+let SuspiciousScheduledTasks =
+    DeviceEvents
+    | where ActionType == "ScheduledTaskCreated"
+    | extend TaskContent = tostring(parse_json(AdditionalFields).TaskContent)
+    | where TaskContent has_any ("deno.exe", "deno run")
+    | project Timestamp, DeviceName, DetectionType = "Scheduled Task", Detail = TaskContent,
+        InitiatingProcessFileName, InitiatingProcessCommandLine, InitiatingProcessAccountName;
+union SuspiciousRunKeys, SuspiciousScheduledTasks
+| order by Timestamp desc

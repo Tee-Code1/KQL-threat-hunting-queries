@@ -1,0 +1,25 @@
+// Title: ClickFix/Deno Campaign - Winget-Installed Deno Executing Remote JavaScript
+// Description: Detects the core abuse pattern of the June 2026 Sophos-tracked
+//   ClickFix campaign: winget.exe silently installing the Deno JavaScript
+//   runtime (a legitimate, code-signed binary unlikely to be flagged by
+//   reputation-based controls), followed by deno.exe fetching and running a
+//   remote script directly (e.g. "deno run https://...") instead of a local
+//   file. Deno's ability to execute remote code with broad permissions from
+//   a user-writable directory makes this a proxy-execution technique
+//   functionally similar to abusing mshta/certutil, but on a newer, less
+//   monitored binary.
+// MITRE ATT&CK: T1127 (Trusted Developer Utilities Proxy Execution), T1105
+//   (Ingress Tool Transfer), T1059.007 (JavaScript)
+// Data source: Microsoft Defender for Endpoint (DeviceProcessEvents)
+// False positives: Legitimate developer workstations installing and using
+//   Deno for real projects. Baseline against known dev machines / expected
+//   winget deployment channels (e.g. Intune, SCCM) before escalating -
+//   installs initiated by explorer.exe/PowerShell rather than a management
+//   agent are the higher-confidence signal.
+
+DeviceProcessEvents
+| where (FileName =~ "winget.exe" and ProcessCommandLine has "deno")
+    or (FileName =~ "deno.exe" and ProcessCommandLine has "run" and ProcessCommandLine has_any ("http://", "https://"))
+| project Timestamp, DeviceName, FileName, FolderPath, ProcessCommandLine,
+    InitiatingProcessFileName, InitiatingProcessCommandLine, AccountName
+| order by Timestamp desc
