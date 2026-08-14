@@ -1,0 +1,26 @@
+// Title: Azure OpenAI - New API Key Regeneration or Role Grant
+// Description: Detects key regeneration/listing and new role assignments
+//   (e.g. "Cognitive Services OpenAI User/Contributor") on Azure OpenAI
+//   resources. A new principal gaining access to an AI resource, or a key
+//   being regenerated outside a known rotation schedule, is a common
+//   persistence or privilege-escalation step after initial compromise of
+//   an Azure identity - it grants ongoing access to a resource that can
+//   itself be abused for cost harvesting, data exposure via prompts sent
+//   through it, or as a pivot point.
+// MITRE ATT&CK: T1098 (Account Manipulation), T1078.004 (Valid Accounts:
+//   Cloud Accounts)
+// Data source: Azure Activity Log (AzureActivity table)
+// False positives: Legitimate scheduled key rotations and normal
+//   onboarding of new applications/service principals to an Azure OpenAI
+//   resource. Cross-reference Caller against your change management
+//   records; alert with higher confidence on grants/regenerations outside
+//   business hours or by callers with no prior history against this
+//   resource.
+
+AzureActivity
+| where TimeGenerated > ago(1d)
+| where ResourceProviderValue == "MICROSOFT.COGNITIVESERVICES"
+| where OperationNameValue has_any ("regenerateKey", "listKeys", "roleAssignments/write")
+| where ActivityStatusValue == "Success"
+| project TimeGenerated, Caller, CallerIpAddress, OperationNameValue, Resource, ResourceGroup, ActivityStatusValue
+| order by TimeGenerated desc

@@ -1,0 +1,35 @@
+// Title: Azure OpenAI - Prompt Injection / Jailbreak Keyword Match
+// Description: Searches logged prompt content for common jailbreak and
+//   prompt-injection phrasing (instruction override attempts, persona
+//   hijacking, system-prompt extraction attempts) sent to an internal
+//   AI-integrated application backed by Azure OpenAI. Intended for
+//   security teams monitoring their own first-party AI app for abuse
+//   attempts, not for inspecting third-party traffic.
+// MITRE ATLAS: LLM Prompt Injection (verify technique ID against the
+//   current ATLAS matrix release, as ATLAS numbering has evolved)
+// Data source: Azure OpenAI resource diagnostic logs, category
+//   "RequestResponse", with prompt/completion content logging enabled.
+// False positives: Legitimate red-team/security-testing traffic against
+//   your own app, and security awareness training content. Prompt content
+//   logging is privacy- and compliance-sensitive and disabled by default
+//   in many Azure OpenAI configurations (abuse-monitoring opt-out) - this
+//   query only returns results if your org has explicitly enabled request/
+//   response content logging and accepted that data-handling posture.
+
+let JailbreakMarkers = dynamic([
+    "ignore previous instructions", "ignore all previous instructions",
+    "disregard previous instructions", "you are now dan", "developer mode",
+    "jailbreak", "act as if you have no restrictions",
+    "pretend you are an ai without", "bypass your guidelines",
+    "reveal your system prompt", "print your instructions",
+    "what are your initial instructions"
+]);
+AzureDiagnostics
+| where TimeGenerated > ago(1d)
+| where ResourceProvider == "MICROSOFT.COGNITIVESERVICES"
+| where Category == "RequestResponse"
+| extend RequestBody = tolower(tostring(column_ifexists("properties_s", column_ifexists("resultDescription_s", ""))))
+| where isnotempty(RequestBody)
+| where RequestBody has_any (JailbreakMarkers)
+| project TimeGenerated, Resource, CallerIpAddress = column_ifexists("CallerIpAddress", ""), RequestBody
+| order by TimeGenerated desc

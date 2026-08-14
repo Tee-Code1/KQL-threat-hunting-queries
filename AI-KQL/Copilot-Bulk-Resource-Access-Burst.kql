@@ -1,0 +1,42 @@
+// Title: Microsoft 365 Copilot - Bulk Resource Access Burst
+// Description: Detects a user querying/summarizing an unusually high number
+//   of distinct M365 resources (files, sites, mailboxes) through Copilot
+//   within a short window. Copilot only surfaces content the user already
+//   has permission to see, so this isn't an authorization bypass - it's
+//   detecting AI-assisted data harvesting: a compromised account or
+//   malicious insider using Copilot to rapidly skim/summarize a far larger
+//   blast radius of accessible-but-not-normally-touched content than a
+//   human would manually open in the same window.
+// MITRE ATT&CK: T1213 (Data from Information Repositories), T1530 (Data
+//   from Cloud Storage)
+// Data source: Microsoft Purview Unified Audit Log, RecordType
+//   "CopilotInteraction", ingested into Sentinel's OfficeActivity table via
+//   the Office 365 connector.
+// False positives: Legitimate bulk research/audit tasks (e.g. an employee
+//   using Copilot to review a large project's files ahead of a meeting).
+//   Tune ResourceThreshold and BurstWindow to your org's normal Copilot
+//   usage baseline before alerting. NOTE: the CopilotInteraction audit
+//   schema is new and evolving - run
+//   `OfficeActivity | where RecordType == "CopilotInteraction" | take 10`
+//   against your tenant first and adjust the AuditData field path below to
+//   match what you actually see (AccessedResources may be nested
+//   differently depending on Purview schema version).
+
+let LookbackWindow = 1d;
+let BurstWindow = 1h;
+let ResourceThreshold = 15; // distinct resources touched via Copilot within BurstWindow
+OfficeActivity
+| where TimeGenerated > ago(LookbackWindow)
+| where RecordType =~ "CopilotInteraction"
+| extend AuditPayload = column_ifexists("AuditData", "")
+| where isnotempty(AuditPayload)
+| extend AuditJson = parse_json(AuditPayload)
+| extend AccessedResources = AuditJson.AccessedResources
+| mv-expand AccessedResources
+| extend ResourceId = tostring(AccessedResources.Id)
+| where isnotempty(ResourceId)
+| summarize DistinctResources = dcount(ResourceId), Resources = make_set(ResourceId, 50)
+    by bin(TimeGenerated, BurstWindow), UserId
+| where DistinctResources >= ResourceThreshold
+| project TimeGenerated, UserId, DistinctResources, Resources
+| order by DistinctResources desc

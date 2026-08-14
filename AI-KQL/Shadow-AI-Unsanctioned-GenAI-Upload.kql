@@ -1,0 +1,27 @@
+// Title: Shadow AI - File Upload to Unsanctioned GenAI Web App
+// Description: Detects users uploading files to public generative-AI web
+//   apps (ChatGPT, Gemini, Claude.ai, Perplexity, etc.) from managed
+//   devices. This is a data exfiltration / DLP concern distinct from
+//   traditional cloud storage exfil: sensitive data pasted or uploaded into
+//   a third-party AI tool may be retained, used for model training, or
+//   otherwise leave the org's control boundary with no corporate oversight.
+// MITRE ATT&CK: T1567 (Exfiltration Over Web Service)
+// Data source: Microsoft Defender for Cloud Apps, CloudAppEvents table
+//   (M365 Defender / Sentinel unified advanced hunting).
+// False positives: Sanctioned/approved use of an AI tool not yet added to
+//   your allowlist. Prefer driving this off your Defender for Cloud Apps
+//   app catalog's "Generative AI" category and sanctioned/unsanctioned
+//   status rather than the hardcoded app name list below, if your tenant
+//   has that categorization enabled - the list here is a fallback for
+//   environments without app governance configured.
+
+let UnsanctionedAIApps = dynamic([
+    "ChatGPT", "Google Gemini", "Bard", "Claude.ai", "Perplexity AI",
+    "Character.AI", "DeepSeek", "Poe"
+]);
+CloudAppEvents
+| where Timestamp > ago(1d)
+| where Application has_any (UnsanctionedAIApps)
+| where ActionType in ("FileUploaded", "FileUploadedToCloud", "Upload")
+| project Timestamp, AccountId, Application, ActionType, ObjectName, IPAddress, DeviceType, OSPlatform, CountryCode
+| order by Timestamp desc

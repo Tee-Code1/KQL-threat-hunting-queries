@@ -1,0 +1,44 @@
+// Title: Azure OpenAI - Anomalous Request Volume Spike Per Caller
+// Description: Detects a caller (API key / identity / IP) whose Azure
+//   OpenAI request volume spikes far above its own 14-day baseline within
+//   a single hour. Covers two abuse scenarios: a leaked/stolen API key
+//   being used for bulk scraping or model extraction, and cost/resource
+//   harvesting (running up the victim's bill or exhausting quota to
+//   deny service to legitimate users). Uses a per-caller statistical
+//   baseline (mean + N standard deviations) rather than a fixed threshold,
+//   since normal request volume varies enormously between callers.
+// MITRE ATT&CK: T1078 (Valid Accounts - stolen API key), T1499 (Endpoint
+//   Denial of Service - quota exhaustion)
+// MITRE ATLAS: Cost/Resource Harvesting against a deployed AI service
+// Data source: Azure OpenAI resource diagnostic logs, category
+//   "RequestResponse", sent to a Log Analytics workspace (lands in
+//   AzureDiagnostics unless your resource uses a dedicated resource-specific
+//   table - adjust the table name if so).
+// False positives: Legitimate traffic spikes from a new internal
+//   application onboarding, a batch job, or a load test. Cross-reference
+//   spikes against your change calendar before treating as malicious, and
+//   tune SpikeMultiplier / MinRequestFloor to reduce noise.
+
+let LookbackDays = 14d;
+let BinSize = 1h;
+let SpikeMultiplier = 5.0;
+let MinRequestFloor = 20; // ignore spikes below this absolute volume regardless of baseline
+let Baseline =
+    AzureDiagnostics
+    | where TimeGenerated > ago(LookbackDays)
+    | where ResourceProvider == "MICROSOFT.COGNITIVESERVICES"
+    | where Category == "RequestResponse"
+    | extend CallerId = coalesce(column_ifexists("CallerIpAddress", ""), column_ifexists("identity_claim_appid_g", ""))
+    | summarize RequestCount = count() by bin(TimeGenerated, BinSize), Resource, CallerId
+    | summarize AvgHourlyRequests = avg(RequestCount), StdevHourlyRequests = stdev(RequestCount) by Resource, CallerId;
+AzureDiagnostics
+| where TimeGenerated > ago(1d)
+| where ResourceProvider == "MICROSOFT.COGNITIVESERVICES"
+| where Category == "RequestResponse"
+| extend CallerId = coalesce(column_ifexists("CallerIpAddress", ""), column_ifexists("identity_claim_appid_g", ""))
+| summarize RequestCount = count() by bin(TimeGenerated, BinSize), Resource, CallerId
+| join kind=inner Baseline on Resource, CallerId
+| extend Threshold = AvgHourlyRequests + (SpikeMultiplier * StdevHourlyRequests)
+| where RequestCount > Threshold and RequestCount >= MinRequestFloor
+| project TimeGenerated, Resource, CallerId, RequestCount, AvgHourlyRequests, StdevHourlyRequests, Threshold
+| order by RequestCount desc
