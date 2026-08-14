@@ -1,0 +1,23 @@
+// Title: Shared Mailbox - SendAs/SendOnBehalf Activity (Baseline Visibility)
+// Description: Returns every instance of a user sending as, or on behalf
+//   of, a mailbox they don't own. Not an anomaly detection by itself - this
+//   is the foundational inventory query for shared-mailbox usage. Run it
+//   first to understand what legitimate delegate relationships exist in
+//   your tenant (support rotations, EA-to-executive delegation, etc.)
+//   before tuning the companion first-time-pairing and volume-anomaly
+//   queries, and to spot-check unfamiliar sender/mailbox pairs manually.
+// MITRE ATT&CK: T1098.002 (Account Manipulation: Additional Email Delegate
+//   Permissions)
+// Data source: Microsoft 365 Unified Audit Log, Sentinel's OfficeActivity
+//   table, RecordType "ExchangeItem"
+// False positives: N/A - this is a visibility/inventory query, not a
+//   detection. Expect high volume in orgs with active shared-mailbox use;
+//   filter to specific mailboxes of interest (e.g. finance@, hr@) for
+//   focused review.
+
+OfficeActivity
+| where RecordType == "ExchangeItem"
+| where Operation in ("SendAs", "SendOnBehalf")
+| where UserId !~ MailboxOwnerUPN
+| project TimeGenerated, Sender = UserId, SharedMailbox = MailboxOwnerUPN, Operation, ClientIP, ClientInfoString
+| order by TimeGenerated desc

@@ -1,0 +1,35 @@
+// Title: Shared Mailbox - First-Time SendAs/SendOnBehalf Pairing
+// Description: Flags a user exercising SendAs or SendOnBehalf against a
+//   shared/delegated mailbox for the first time in the baseline window.
+//   A newly-granted (or newly-abused) delegate permission is often used
+//   immediately - the first send from a never-before-seen
+//   sender-to-mailbox pairing is a strong signal, whether the permission
+//   grant itself was caught or not (e.g. if it predates your audit
+//   retention, or was granted via a path this repo's grant-detection
+//   query doesn't cover).
+// MITRE ATT&CK: T1098.002 (Account Manipulation: Additional Email Delegate
+//   Permissions), T1566 (Phishing - if used to launch further messages)
+// Data source: Microsoft 365 Unified Audit Log, Sentinel's OfficeActivity
+//   table, RecordType "ExchangeItem"
+// False positives: Legitimate first-time use of a properly provisioned
+//   shared mailbox (new hire added to a support/helpdesk rotation).
+//   Cross-reference against recent legitimate permission grants (see the
+//   companion New-Delegate-Permission-Grant query) before escalating.
+
+let LookbackBaseline = 30d;
+let DetectionWindow = 1d;
+let KnownPairs =
+    OfficeActivity
+    | where TimeGenerated between (ago(LookbackBaseline + DetectionWindow) .. ago(DetectionWindow))
+    | where RecordType == "ExchangeItem"
+    | where Operation in ("SendAs", "SendOnBehalf")
+    | where UserId !~ MailboxOwnerUPN
+    | summarize by UserId, MailboxOwnerUPN;
+OfficeActivity
+| where TimeGenerated > ago(DetectionWindow)
+| where RecordType == "ExchangeItem"
+| where Operation in ("SendAs", "SendOnBehalf")
+| where UserId !~ MailboxOwnerUPN
+| join kind=leftanti KnownPairs on UserId, MailboxOwnerUPN
+| project TimeGenerated, Sender = UserId, SharedMailbox = MailboxOwnerUPN, Operation, ClientIP, ClientInfoString
+| order by TimeGenerated desc

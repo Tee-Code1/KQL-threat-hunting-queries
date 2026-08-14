@@ -1,0 +1,42 @@
+// Title: Shared Mailbox - SendAs/SendOnBehalf Volume Anomaly
+// Description: Flags a sender-to-mailbox pairing whose daily SendAs/
+//   SendOnBehalf volume spikes far above its own 14-day baseline. Normal
+//   shared-mailbox use (e.g. a support rotation) has a fairly stable daily
+//   send rate; a sudden burst is consistent with the mailbox's trusted
+//   identity being used to blast a phishing/BEC campaign to internal or
+//   external recipients. Uses a per-pairing statistical baseline (mean + N
+//   standard deviations) since normal volume varies enormously between
+//   mailboxes and senders.
+// MITRE ATT&CK: T1098.002 (Account Manipulation: Additional Email Delegate
+//   Permissions), T1566 (Phishing)
+// Data source: Microsoft 365 Unified Audit Log, Sentinel's OfficeActivity
+//   table, RecordType "ExchangeItem"
+// False positives: Seasonal/campaign-driven legitimate mass mail from a
+//   shared mailbox (e.g. a marketing or HR announcement). Tune
+//   SpikeMultiplier and MinFloor, and cross-reference recipient domains -
+//   a spike sending predominantly to external/unfamiliar domains is far
+//   higher confidence than one to internal recipients.
+
+let LookbackDays = 14d;
+let BinSize = 1d;
+let SpikeMultiplier = 4.0;
+let MinFloor = 15; // ignore spikes below this absolute daily volume regardless of baseline
+let Baseline =
+    OfficeActivity
+    | where TimeGenerated > ago(LookbackDays)
+    | where RecordType == "ExchangeItem"
+    | where Operation in ("SendAs", "SendOnBehalf")
+    | where UserId !~ MailboxOwnerUPN
+    | summarize DailyCount = count() by bin(TimeGenerated, BinSize), UserId, MailboxOwnerUPN
+    | summarize AvgDaily = avg(DailyCount), StdevDaily = stdev(DailyCount) by UserId, MailboxOwnerUPN;
+OfficeActivity
+| where TimeGenerated > ago(1d)
+| where RecordType == "ExchangeItem"
+| where Operation in ("SendAs", "SendOnBehalf")
+| where UserId !~ MailboxOwnerUPN
+| summarize TodayCount = count() by UserId, MailboxOwnerUPN
+| join kind=inner Baseline on UserId, MailboxOwnerUPN
+| extend Threshold = AvgDaily + (SpikeMultiplier * StdevDaily)
+| where TodayCount > Threshold and TodayCount >= MinFloor
+| project UserId, MailboxOwnerUPN, TodayCount, AvgDaily, StdevDaily, Threshold
+| order by TodayCount desc

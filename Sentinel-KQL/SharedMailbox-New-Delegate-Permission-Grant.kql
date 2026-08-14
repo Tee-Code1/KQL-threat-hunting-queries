@@ -1,0 +1,27 @@
+// Title: Shared Mailbox - New SendAs / SendOnBehalf / FullAccess Permission Grant
+// Description: Detects the privilege-escalation moment in shared-mailbox
+//   abuse: an admin action granting SendAs, SendOnBehalf, or FullAccess
+//   rights on a mailbox. This is frequently how BEC operators establish
+//   covert, persistent ability to impersonate a trusted shared mailbox
+//   (e.g. accounts@, finance@, hr@) after compromising an account with
+//   mailbox-admin rights - the grant itself is the higher-value detection
+//   point, since it precedes and enables any later SendAs abuse.
+// MITRE ATT&CK: T1098.002 (Account Manipulation: Additional Email Delegate
+//   Permissions)
+// Data source: Microsoft 365 Unified Audit Log (Exchange admin audit),
+//   Sentinel's OfficeActivity table, RecordType "ExchangeAdmin"
+// False positives: Legitimate IT/helpdesk delegation of shared mailbox
+//   access during onboarding or role changes. Cross-reference Caller
+//   against your change management / ticketing system; escalate grants on
+//   executive, finance, or other high-value mailboxes with higher priority.
+
+OfficeActivity
+| where RecordType == "ExchangeAdmin"
+| where Operation in ("Add-MailboxPermission", "Add-RecipientPermission", "Set-Mailbox")
+| mv-expand Parameters
+| extend ParamName = tostring(Parameters.Name), ParamValue = tostring(Parameters.Value)
+| where (Operation in ("Add-MailboxPermission", "Add-RecipientPermission")
+        and ParamName == "AccessRights" and ParamValue has_any ("FullAccess", "SendAs"))
+    or (Operation == "Set-Mailbox" and ParamName == "GrantSendOnBehalfTo" and isnotempty(ParamValue))
+| project TimeGenerated, Caller = UserId, Operation, TargetMailbox = OfficeObjectId, GrantedRight = ParamValue, ResultStatus
+| order by TimeGenerated desc
