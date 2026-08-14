@@ -10,10 +10,18 @@
 // MITRE ATT&CK: T1078 (Valid Accounts - stolen API key), T1499 (Endpoint
 //   Denial of Service - quota exhaustion)
 // MITRE ATLAS: Cost/Resource Harvesting against a deployed AI service
-// Data source: Azure OpenAI resource diagnostic logs, category
-//   "RequestResponse", sent to a Log Analytics workspace (lands in
-//   AzureDiagnostics unless your resource uses a dedicated resource-specific
-//   table - adjust the table name if so).
+// Data source: Azure OpenAI resource diagnostic logs, sent to a Log
+//   Analytics workspace, landing in AzureDiagnostics. VERIFIED against
+//   Microsoft's Azure OpenAI monitoring reference: the resource log
+//   categories are "Audit Logs," "Azure OpenAI Request Usage," "Request and
+//   Response Logs," and "Trace Logs" (portal display names) - this query
+//   targets "Azure OpenAI Request Usage" since it's a per-request usage
+//   record and does NOT require opting into prompt/completion content
+//   logging (unlike "Request and Response Logs", used by the companion
+//   prompt-injection query). The exact internal Category string value in
+//   AzureDiagnostics may differ from the portal display name - run
+//   `AzureDiagnostics | where ResourceProvider == "MICROSOFT.COGNITIVESERVICES" | distinct Category`
+//   against your workspace first and adjust if needed.
 // False positives: Legitimate traffic spikes from a new internal
 //   application onboarding, a batch job, or a load test. Cross-reference
 //   spikes against your change calendar before treating as malicious, and
@@ -27,15 +35,15 @@ let Baseline =
     AzureDiagnostics
     | where TimeGenerated > ago(LookbackDays)
     | where ResourceProvider == "MICROSOFT.COGNITIVESERVICES"
-    | where Category == "RequestResponse"
-    | extend CallerId = coalesce(column_ifexists("CallerIpAddress", ""), column_ifexists("identity_claim_appid_g", ""))
+    | where Category == "Azure OpenAI Request Usage"
+    | extend CallerId = coalesce(column_ifexists("CallerIPAddress", ""), column_ifexists("identity_claim_appid_g", ""))
     | summarize RequestCount = count() by bin(TimeGenerated, BinSize), Resource, CallerId
     | summarize AvgHourlyRequests = avg(RequestCount), StdevHourlyRequests = stdev(RequestCount) by Resource, CallerId;
 AzureDiagnostics
 | where TimeGenerated > ago(1d)
 | where ResourceProvider == "MICROSOFT.COGNITIVESERVICES"
-| where Category == "RequestResponse"
-| extend CallerId = coalesce(column_ifexists("CallerIpAddress", ""), column_ifexists("identity_claim_appid_g", ""))
+| where Category == "Azure OpenAI Request Usage"
+| extend CallerId = coalesce(column_ifexists("CallerIPAddress", ""), column_ifexists("identity_claim_appid_g", ""))
 | summarize RequestCount = count() by bin(TimeGenerated, BinSize), Resource, CallerId
 | join kind=inner Baseline on Resource, CallerId
 | extend Threshold = AvgHourlyRequests + (SpikeMultiplier * StdevHourlyRequests)

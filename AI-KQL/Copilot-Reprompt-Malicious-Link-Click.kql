@@ -1,0 +1,53 @@
+// Title: Copilot "Reprompt" - Prompt-Injected Link Click Missed By Email Security
+// Description: Detects the entry point of the "Reprompt" attack (Varonis
+//   Threat Labs, 2026): a link to Microsoft Copilot or Bing Chat carrying
+//   attacker instructions encoded in a URL parameter (Parameter-to-Prompt /
+//   "P2P" injection). Copilot treats the parameter content as a user
+//   prompt and executes it the moment the link is opened - no file
+//   download, no credential entry, just a click, weaponizing the user's
+//   trust in a first-party AI assistant. A legitimate Copilot/Bing Chat
+//   link is short; an injected-instruction payload makes the URL far
+//   longer than normal, and often contains recognizable instruction-
+//   override phrasing once URL-decoded.
+//
+//   The point of this query is the gap it fills: email security products
+//   (Safe Links, and equally Proofpoint/Mimecast/Abnormal/etc.) score
+//   links for malware and phishing, not for "does this URL contain a
+//   prompt trying to hijack a trusted AI assistant." A link like this can
+//   sail through with a clean verdict. Prioritize rows where the link
+//   was ALLOWED and carries no threat verdict - that's precisely the set
+//   your existing email security stack didn't catch.
+// MITRE ATT&CK: T1204.001 (User Execution: Malicious Link), T1566.002
+//   (Phishing: Spearphishing Link)
+// MITRE ATLAS: LLM Prompt Injection
+// Data source: Microsoft Defender for Office 365, UrlClickEvents table
+//   (Safe Links click telemetry) - requires Safe Links to be scanning the
+//   relevant workload (Email, Office, Teams). If you run a different email
+//   security product instead of/alongside Safe Links, the detection logic
+//   below (destination host allowlist + URL length / decoded instruction-
+//   phrase heuristic) is directly portable - point it at whatever table
+//   your product logs URL clicks or link-rewrite events to, as long as it
+//   exposes the full clicked URL and a "did the user get through" verdict.
+// False positives: Legitimate long Copilot/Bing share links (e.g. a
+//   pre-filled prompt shared internally for a demo). Cross-reference
+//   AccountUpn against whether the click originated from an external email
+//   (join to EmailEvents via NetworkMessageId) for higher confidence, and
+//   tune MinSuspiciousUrlLength against your own baseline of legitimate
+//   Copilot link lengths.
+
+let CopilotHosts = dynamic(["copilot.microsoft.com", "www.bing.com", "cn.bing.com"]);
+let InjectionMarkers = dynamic([
+    "ignore previous", "ignore all previous", "disregard previous",
+    "system prompt", "you are now", "developer mode", "new instructions",
+    "reveal your", "print your instructions", "act as if"
+]);
+let MinSuspiciousUrlLength = 500; // ordinary Copilot/Bing links are short; injected-instruction payloads push this far higher
+UrlClickEvents
+| where Timestamp > ago(1d)
+| where Url has_any (CopilotHosts)
+| extend DecodedUrl = url_decode(Url)
+| extend UrlLength = strlen(Url)
+| where UrlLength >= MinSuspiciousUrlLength or DecodedUrl has_any (InjectionMarkers)
+| extend MissedByEmailSecurity = (ActionType == "ClickAllowed" and isempty(ThreatTypes))
+| project Timestamp, AccountUpn, Url, UrlLength, ActionType, ThreatTypes, MissedByEmailSecurity, IsClickedThrough, IPAddress, Workload, ReportId, NetworkMessageId
+| order by MissedByEmailSecurity desc, Timestamp desc

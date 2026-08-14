@@ -8,6 +8,23 @@
 // MITRE ATT&CK: T1567 (Exfiltration Over Web Service)
 // Data source: Microsoft Defender for Cloud Apps, CloudAppEvents table
 //   (M365 Defender / Sentinel unified advanced hunting).
+// IMPORTANT PREREQUISITE - verified against Microsoft's documented
+//   "Apps and services covered" list for CloudAppEvents: this table is
+//   populated by APP-CONNECTED SaaS (Office 365, SharePoint, Teams,
+//   Salesforce, GitHub, Dropbox, Atlassian, etc.) and by session-controlled
+//   apps routed through Conditional Access App Control. Consumer GenAI apps
+//   (ChatGPT, Gemini, Claude.ai, Perplexity, etc.) have NO native API
+//   connector - Defender for Cloud Apps only sees them at the Cloud
+//   Discovery traffic level (an app was used, how much data moved), not at
+//   this activity level (what file, by whom). This query will return ZERO
+//   rows for those apps unless you've specifically published the app
+//   through Conditional Access App Control (reverse-proxy session control)
+//   - it is not a matter of enabling a policy or waiting for data, the
+//   connector doesn't exist for these apps otherwise. Use this query as
+//   written only for GenAI tools you've proxied that way; for pure
+//   visibility into unproxied GenAI app usage, use Cloud Discovery
+//   (Discovered apps dashboard / Cloud Discovery policies) instead - that
+//   data isn't exposed through this table.
 // False positives: Sanctioned/approved use of an AI tool not yet added to
 //   your allowlist. Prefer driving this off your Defender for Cloud Apps
 //   app catalog's "Generative AI" category and sanctioned/unsanctioned

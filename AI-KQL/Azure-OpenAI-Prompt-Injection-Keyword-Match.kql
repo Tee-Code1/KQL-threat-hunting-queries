@@ -7,8 +7,12 @@
 //   attempts, not for inspecting third-party traffic.
 // MITRE ATLAS: LLM Prompt Injection (verify technique ID against the
 //   current ATLAS matrix release, as ATLAS numbering has evolved)
-// Data source: Azure OpenAI resource diagnostic logs, category
-//   "RequestResponse", with prompt/completion content logging enabled.
+// Data source: Azure OpenAI resource diagnostic logs, category "Request and
+//   Response Logs" (portal display name; the exact internal Category string
+//   in AzureDiagnostics may differ - run
+//   `AzureDiagnostics | where ResourceProvider == "MICROSOFT.COGNITIVESERVICES" | distinct Category`
+//   against your workspace and adjust if needed), with prompt/completion
+//   content logging enabled.
 // False positives: Legitimate red-team/security-testing traffic against
 //   your own app, and security awareness training content. Prompt content
 //   logging is privacy- and compliance-sensitive and disabled by default
@@ -27,9 +31,9 @@ let JailbreakMarkers = dynamic([
 AzureDiagnostics
 | where TimeGenerated > ago(1d)
 | where ResourceProvider == "MICROSOFT.COGNITIVESERVICES"
-| where Category == "RequestResponse"
+| where Category == "Request and Response Logs"
 | extend RequestBody = tolower(tostring(column_ifexists("properties_s", column_ifexists("resultDescription_s", ""))))
 | where isnotempty(RequestBody)
 | where RequestBody has_any (JailbreakMarkers)
-| project TimeGenerated, Resource, CallerIpAddress = column_ifexists("CallerIpAddress", ""), RequestBody
+| project TimeGenerated, Resource, CallerIPAddress = column_ifexists("CallerIPAddress", ""), RequestBody
 | order by TimeGenerated desc
